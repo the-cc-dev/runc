@@ -16,6 +16,7 @@ import (
 	"github.com/opencontainers/runc/libcontainer"
 	"github.com/opencontainers/runc/libcontainer/cgroups/systemd"
 	"github.com/opencontainers/runc/libcontainer/configs"
+	"github.com/opencontainers/runtime-spec/specs-go"
 
 	"golang.org/x/sys/unix"
 )
@@ -1148,7 +1149,7 @@ func TestHook(t *testing.T) {
 
 	config.Hooks = &configs.Hooks{
 		Prestart: []configs.Hook{
-			configs.NewFunctionHook(func(s configs.HookState) error {
+			configs.NewFunctionHook(func(s *specs.State) error {
 				if s.Bundle != expectedBundle {
 					t.Fatalf("Expected prestart hook bundlePath '%s'; got '%s'", expectedBundle, s.Bundle)
 				}
@@ -1165,7 +1166,7 @@ func TestHook(t *testing.T) {
 			}),
 		},
 		Poststart: []configs.Hook{
-			configs.NewFunctionHook(func(s configs.HookState) error {
+			configs.NewFunctionHook(func(s *specs.State) error {
 				if s.Bundle != expectedBundle {
 					t.Fatalf("Expected poststart hook bundlePath '%s'; got '%s'", expectedBundle, s.Bundle)
 				}
@@ -1178,7 +1179,7 @@ func TestHook(t *testing.T) {
 			}),
 		},
 		Poststop: []configs.Hook{
-			configs.NewFunctionHook(func(s configs.HookState) error {
+			configs.NewFunctionHook(func(s *specs.State) error {
 				if s.Bundle != expectedBundle {
 					t.Fatalf("Expected poststop hook bundlePath '%s'; got '%s'", expectedBundle, s.Bundle)
 				}
@@ -1263,10 +1264,7 @@ func TestSTDIOPermissions(t *testing.T) {
 }
 
 func unmountOp(path string) error {
-	if err := unix.Unmount(path, unix.MNT_DETACH); err != nil {
-		return err
-	}
-	return nil
+	return unix.Unmount(path, unix.MNT_DETACH)
 }
 
 // Launch container with rootfsPropagation in rslave mode. Also
@@ -1774,5 +1772,62 @@ func TestTmpfsCopyUp(t *testing.T) {
 	// Check that the ls output has /etc/passwd
 	if !strings.Contains(outputLs, "/etc/passwd") {
 		t.Fatalf("/etc/passwd not copied up as expected: %v", outputLs)
+	}
+}
+
+func TestCGROUPPrivate(t *testing.T) {
+	if _, err := os.Stat("/proc/self/ns/cgroup"); os.IsNotExist(err) {
+		t.Skip("cgroupns is unsupported")
+	}
+	if testing.Short() {
+		return
+	}
+
+	rootfs, err := newRootfs()
+	ok(t, err)
+	defer remove(rootfs)
+
+	l, err := os.Readlink("/proc/1/ns/cgroup")
+	ok(t, err)
+
+	config := newTemplateConfig(rootfs)
+	config.Namespaces.Add(configs.NEWCGROUP, "")
+	buffers, exitCode, err := runContainer(config, "", "readlink", "/proc/self/ns/cgroup")
+	ok(t, err)
+
+	if exitCode != 0 {
+		t.Fatalf("exit code not 0. code %d stderr %q", exitCode, buffers.Stderr)
+	}
+
+	if actual := strings.Trim(buffers.Stdout.String(), "\n"); actual == l {
+		t.Fatalf("cgroup link should be private to the container but equals host %q %q", actual, l)
+	}
+}
+
+func TestCGROUPHost(t *testing.T) {
+	if _, err := os.Stat("/proc/self/ns/cgroup"); os.IsNotExist(err) {
+		t.Skip("cgroupns is unsupported")
+	}
+	if testing.Short() {
+		return
+	}
+
+	rootfs, err := newRootfs()
+	ok(t, err)
+	defer remove(rootfs)
+
+	l, err := os.Readlink("/proc/1/ns/cgroup")
+	ok(t, err)
+
+	config := newTemplateConfig(rootfs)
+	buffers, exitCode, err := runContainer(config, "", "readlink", "/proc/self/ns/cgroup")
+	ok(t, err)
+
+	if exitCode != 0 {
+		t.Fatalf("exit code not 0. code %d stderr %q", exitCode, buffers.Stderr)
+	}
+
+	if actual := strings.Trim(buffers.Stdout.String(), "\n"); actual != l {
+		t.Fatalf("cgroup link not equal to host link %q %q", actual, l)
 	}
 }

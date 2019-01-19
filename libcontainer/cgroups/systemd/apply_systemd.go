@@ -5,6 +5,7 @@ package systemd
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -319,6 +320,12 @@ func (m *Manager) Apply(pid int) error {
 			newProp("BlockIOWeight", uint64(c.Resources.BlkioWeight)))
 	}
 
+	if c.Resources.PidsLimit > 0 {
+		properties = append(properties,
+			newProp("TasksAccounting", true),
+			newProp("TasksMax", uint64(c.Resources.PidsLimit)))
+	}
+
 	// We have to set kernel memory here, as we can't change it once
 	// processes have been attached to the cgroup.
 	if c.Resources.KernelMemory != 0 {
@@ -464,7 +471,7 @@ func ExpandSlice(slice string) (string, error) {
 }
 
 func getSubsystemPath(c *configs.Cgroup, subsystem string) (string, error) {
-	mountpoint, err := cgroups.FindCgroupMountpoint(subsystem)
+	mountpoint, err := cgroups.FindCgroupMountpoint(c.Path, subsystem)
 	if err != nil {
 		return "", err
 	}
@@ -583,6 +590,15 @@ func setKernelMemory(c *configs.Cgroup) error {
 
 	if err := os.MkdirAll(path, 0755); err != nil {
 		return err
+	}
+	// do not try to enable the kernel memory if we already have
+	// tasks in the cgroup.
+	content, err := ioutil.ReadFile(filepath.Join(path, "tasks"))
+	if err != nil {
+		return err
+	}
+	if len(content) > 0 {
+		return nil
 	}
 	return fs.EnableKernelMemoryAccounting(path)
 }

@@ -71,7 +71,7 @@ func inheritStdio(process *libcontainer.Process) error {
 	return nil
 }
 
-func (t *tty) recvtty(process *libcontainer.Process, socket *os.File) error {
+func (t *tty) recvtty(process *libcontainer.Process, socket *os.File) (Err error) {
 	f, err := utils.RecvFd(socket)
 	if err != nil {
 		return err
@@ -89,6 +89,11 @@ func (t *tty) recvtty(process *libcontainer.Process, socket *os.File) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if Err != nil {
+			epollConsole.Close()
+		}
+	}()
 	go epoller.Wait()
 	go io.Copy(epollConsole, os.Stdin)
 	t.wg.Add(1)
